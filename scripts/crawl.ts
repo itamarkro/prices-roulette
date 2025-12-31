@@ -140,16 +140,21 @@ function generateFallbackPrices() {
   const priceData: PriceData = {
     lastUpdated: new Date().toISOString(),
     source: "fallback",
-    products: productCatalog.map((p) => ({
-      id: p.id,
-      name: p.name,
-      nameHebrew: p.nameHebrew,
-      category: p.category,
-      unit: p.unit,
-      image: p.image,
-      ...fallbackPrices[p.id],
-      matchedItems: 0,
-    })),
+    products: productCatalog.map((p) => {
+      const prices = fallbackPrices[p.id];
+      return {
+        id: p.id,
+        name: p.name,
+        nameHebrew: p.nameHebrew,
+        category: p.category,
+        unit: p.unit,
+        image: p.image,
+        averagePrice: prices.average,
+        lowPrice: prices.low,
+        highPrice: prices.high,
+        matchedItems: 0,
+      };
+    }),
   };
 
   const outputPath = join(process.cwd(), "src/data/prices.json");
