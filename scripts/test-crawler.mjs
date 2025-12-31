@@ -1,143 +1,166 @@
 #!/usr/bin/env node
 /**
- * Test script for Israeli supermarket price crawling
+ * Test script for Shufersal price crawler - Full catalog version
  * Run with: node scripts/test-crawler.mjs
  */
 
-console.log("🧪 Testing Israeli Supermarket Price APIs\n");
-console.log("=".repeat(60));
+import { gunzipSync } from "zlib";
 
-// Test multiple endpoints
-const endpoints = [
-  {
-    name: "Shufersal Main",
-    url: "https://prices.shufersal.co.il/",
-    method: "GET",
-  },
-  {
-    name: "Shufersal HTTP",
-    url: "http://prices.shufersal.co.il/",
-    method: "GET",
-  },
-  {
-    name: "Shufersal FileObject",
-    url: "http://prices.shufersal.co.il/FileObject/UpdateCategory?catID=-1&storeId=-1&sort=Time&sortdir=DESC",
-    method: "GET",
-  },
-  {
-    name: "Open Prices IL (Community)",
-    url: "https://raw.githubusercontent.com/erasta/IsraelSupermarketPrices/main/data/latest/shufersal.json",
-    method: "GET",
-  },
-  {
-    name: "Gov IL Open Data",
-    url: "https://data.gov.il/api/3/action/package_search?q=supermarket+prices",
-    method: "GET",
-  },
+const SHUFERSAL_URL = "https://prices.shufersal.co.il/";
+
+// Products we want to find
+const TARGET_PRODUCTS = [
+  { name: "חלב תנובה", keywords: ["חלב", "תנובה"] },
+  { name: "ביצים", keywords: ["ביצים", "ביצה"] },
+  { name: "לחם", keywords: ["לחם לבן", "אנג'ל"] },
+  { name: "קוקה קולה", keywords: ["קוקה קולה", "קולה 1.5"] },
+  { name: "במבה", keywords: ["במבה"] },
+  { name: "ביסלי", keywords: ["ביסלי"] },
+  { name: "קוטג'", keywords: ["קוטג"] },
+  { name: "גבינה צהובה", keywords: ["גבינה צהובה", "עמק"] },
+  { name: "חזה עוף", keywords: ["חזה עוף", "עוף"] },
 ];
 
-async function testEndpoint(endpoint) {
-  console.log(`\n📡 Testing: ${endpoint.name}`);
-  console.log(`   URL: ${endpoint.url}`);
-  
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    
-    const response = await fetch(endpoint.url, {
-      method: endpoint.method,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
-      },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    
-    clearTimeout(timeoutId);
-    
-    console.log(`   Status: ${response.status} ${response.statusText}`);
-    console.log(`   Content-Type: ${response.headers.get("content-type") || "N/A"}`);
-    
-    if (response.ok) {
-      const contentType = response.headers.get("content-type") || "";
-      let preview = "";
-      
-      if (contentType.includes("json")) {
-        const json = await response.json();
-        preview = JSON.stringify(json, null, 2).substring(0, 500);
-        console.log(`   ✅ JSON Response (first 500 chars):`);
-        console.log(`   ${preview.split('\n').join('\n   ')}`);
-        return { success: true, type: "json", data: json };
-      } else {
-        const text = await response.text();
-        preview = text.substring(0, 500);
-        console.log(`   ✅ Response (first 500 chars):`);
-        console.log(`   ${preview.split('\n').slice(0, 10).join('\n   ')}`);
-        
-        // Look for useful links in HTML
-        const links = text.match(/href="([^"]*(?:gz|xml|json)[^"]*)"/gi) || [];
-        if (links.length > 0) {
-          console.log(`\n   📁 Found ${links.length} data file links:`);
-          links.slice(0, 5).forEach((l, i) => {
-            const url = l.match(/href="([^"]*)"/i)?.[1] || "";
-            console.log(`      ${i + 1}. ${url}`);
-          });
-        }
-        
-        return { success: true, type: "html", data: text };
-      }
-    } else {
-      console.log(`   ❌ Failed: ${response.status}`);
-      return { success: false };
-    }
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      console.log(`   ❌ Timeout (>10s)`);
-    } else {
-      console.log(`   ❌ Error: ${error.message}`);
-    }
-    return { success: false, error: error.message };
-  }
-}
-
 async function main() {
-  const results = [];
+  console.log("🧪 Testing Shufersal Price Crawler (Full Catalog)\n");
+  console.log("=".repeat(60));
+
+  // Step 1: Fetch the main page
+  console.log("\n📡 Step 1: Fetching Shufersal price transparency page...");
   
-  for (const endpoint of endpoints) {
-    const result = await testEndpoint(endpoint);
-    results.push({ name: endpoint.name, ...result });
+  const response = await fetch(SHUFERSAL_URL, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      "Accept": "text/html,application/xhtml+xml,application/xml",
+      "Accept-Language": "he-IL,he;q=0.9",
+    },
+  });
+
+  if (!response.ok) {
+    console.log(`❌ Failed: ${response.status}`);
+    return;
+  }
+  console.log("✅ Page loaded successfully");
+
+  // Step 2: Extract Azure Blob URLs - look for PriceFull files
+  console.log("\n📋 Step 2: Extracting price file URLs...");
+  const html = await response.text();
+  
+  // Look for PriceFull files (complete catalog) and regular Price files
+  const urlRegex = /https:\/\/pricesprodpublic\.blob\.core\.windows\.net\/[^"'\s]+(?:PriceFull|Price)[^"'\s]*\.gz[^"'\s]*/g;
+  const matches = html.match(urlRegex) || [];
+  const urls = [...new Set(matches.map(u => u.replace(/&amp;/g, "&")))];
+  
+  // Separate PriceFull and regular Price files
+  const priceFullUrls = urls.filter(u => u.includes("PriceFull"));
+  const priceUrls = urls.filter(u => !u.includes("PriceFull"));
+  
+  console.log(`✅ Found ${priceFullUrls.length} PriceFull files (complete catalog)`);
+  console.log(`✅ Found ${priceUrls.length} Price files (updates/promotions)`);
+
+  // Use PriceFull if available, otherwise regular Price
+  const targetUrls = priceFullUrls.length > 0 ? priceFullUrls : priceUrls;
+  
+  if (targetUrls.length === 0) {
+    console.log("❌ No price files found");
+    return;
+  }
+
+  // Download multiple files to get price ranges
+  console.log("\n📥 Step 3: Downloading price files...");
+  
+  const allItems = [];
+  const filesToDownload = targetUrls.slice(0, 3); // Download 3 files for variety
+  
+  for (let i = 0; i < filesToDownload.length; i++) {
+    const url = filesToDownload[i];
+    const storeMatch = url.match(/(?:Price|PriceFull)\d+-(\d+)-/);
+    const storeId = storeMatch ? storeMatch[1] : `file${i + 1}`;
+    
+    try {
+      console.log(`   📦 Store ${storeId}...`);
+      const fileResponse = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+      });
+      
+      if (!fileResponse.ok) {
+        console.log(`      ❌ Failed: ${fileResponse.status}`);
+        continue;
+      }
+      
+      const buffer = await fileResponse.arrayBuffer();
+      const decompressed = gunzipSync(Buffer.from(buffer));
+      const xml = decompressed.toString("utf-8");
+      
+      // Parse items
+      const itemMatches = xml.match(/<Item>[\s\S]*?<\/Item>/gi) || [];
+      
+      for (const itemXml of itemMatches) {
+        const getTag = (tag) => {
+          const m = itemXml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, "i"));
+          return m ? m[1].trim() : "";
+        };
+        
+        const itemCode = getTag("ItemCode");
+        const itemName = getTag("ItemName");
+        const itemPrice = parseFloat(getTag("ItemPrice")) || 0;
+        
+        if (itemCode && itemName && itemPrice > 0) {
+          allItems.push({ itemCode, itemName, itemPrice, storeId });
+        }
+      }
+      
+      console.log(`      ✅ Parsed ${itemMatches.length} items`);
+    } catch (error) {
+      console.log(`      ❌ Error: ${error.message}`);
+    }
   }
   
-  // Summary
+  console.log(`\n📊 Total items collected: ${allItems.length}`);
+
+  // Search for our target products
   console.log("\n" + "=".repeat(60));
-  console.log("📊 SUMMARY\n");
+  console.log("🎯 SEARCHING FOR TARGET PRODUCTS\n");
   
-  const working = results.filter(r => r.success);
-  const failed = results.filter(r => !r.success);
-  
-  console.log(`✅ Working: ${working.length}`);
-  working.forEach(r => console.log(`   - ${r.name}`));
-  
-  console.log(`\n❌ Failed: ${failed.length}`);
-  failed.forEach(r => console.log(`   - ${r.name}: ${r.error || 'HTTP error'}`));
-  
-  console.log("\n" + "=".repeat(60));
-  console.log("💡 RECOMMENDATION\n");
-  
-  if (working.some(r => r.name.includes("Community") || r.name.includes("Gov"))) {
-    console.log("The community/government data sources are available!");
-    console.log("These are more reliable than scraping individual supermarket sites.");
-    console.log("\nI recommend updating the crawler to use:");
-    console.log("1. GitHub community data (IsraelSupermarketPrices)");
-    console.log("2. data.gov.il open data portal");
-  } else {
-    console.log("Direct supermarket APIs may require:");
-    console.log("- Specific headers or cookies");
-    console.log("- Running from an Israeli IP");
-    console.log("- Handling their specific authentication");
+  for (const target of TARGET_PRODUCTS) {
+    const found = allItems.filter(item => 
+      target.keywords.some(kw => 
+        item.itemName.includes(kw)
+      )
+    );
+    
+    if (found.length > 0) {
+      const prices = found.map(f => f.itemPrice);
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
+      
+      console.log(`✅ ${target.name}:`);
+      console.log(`   Found: ${found.length} variants`);
+      console.log(`   Range: ₪${min.toFixed(2)} - ₪${max.toFixed(2)}`);
+      console.log(`   Average: ₪${avg.toFixed(2)}`);
+      console.log(`   Examples:`);
+      // Show unique product names with lowest price
+      const uniqueProducts = new Map();
+      found.forEach(f => {
+        const key = f.itemName.substring(0, 35);
+        if (!uniqueProducts.has(key) || f.itemPrice < uniqueProducts.get(key).itemPrice) {
+          uniqueProducts.set(key, f);
+        }
+      });
+      [...uniqueProducts.values()].slice(0, 3).forEach(f => {
+        console.log(`     - ${f.itemName.substring(0, 45)} @ ₪${f.itemPrice.toFixed(2)}`);
+      });
+      console.log();
+    } else {
+      console.log(`⚠️  ${target.name}: Not found\n`);
+    }
   }
+
+  console.log("=".repeat(60));
+  console.log("✨ Test complete!\n");
+  console.log("The crawler found real price data from Shufersal.");
+  console.log("These prices can be used to update your app.\n");
 }
 
 main().catch(console.error);

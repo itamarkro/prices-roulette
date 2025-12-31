@@ -1,81 +1,42 @@
 /**
  * Shufersal Price Crawler
  *
- * Fetches prices from Shufersal's price transparency API.
- * Based on Israeli Price Transparency Law requirements.
+ * Fetches prices from Shufersal's price transparency site.
+ * The site provides Azure Blob Storage links to gzipped XML price files.
  *
  * Data source: https://prices.shufersal.co.il/
- * Format: XML files (gzipped) containing price lists
  */
 
 import { gunzipSync } from "zlib";
 import { RawStoreItem, CrawlerResult } from "../lib/types";
 
-// Shufersal's price transparency endpoint
-const SHUFERSAL_BASE_URL = "http://prices.shufersal.co.il/FileObject/UpdateCategory";
-
-// Store IDs for different Shufersal branches
-export const SHUFERSAL_STORES = {
-  // Major branches - you can add more as needed
-  "Shufersal Deal Ramat Aviv": "001",
-  "Shufersal Sheli Tel Aviv": "002",
-  "Shufersal Online": "003",
-} as const;
-
-interface ShufersalFileInfo {
-  url: string;
-  fileName: string;
-  fileType: string;
-}
+// Shufersal's price transparency page
+const SHUFERSAL_URL = "https://prices.shufersal.co.il/";
 
 /**
  * Parse XML price data from Shufersal
- * Simple XML parsing without external dependencies
+ * The XML structure contains Items with price information
  */
 function parseXMLPrices(xmlContent: string): RawStoreItem[] {
   const items: RawStoreItem[] = [];
 
-  // Match all <Item> or <Product> elements
-  const itemMatches = xmlContent.match(/<(Item|Product)[^>]*>[\s\S]*?<\/\1>/gi) || [];
+  // Match all <Item> elements
+  const itemMatches = xmlContent.match(/<Item>[\s\S]*?<\/Item>/gi) || [];
 
   for (const itemXml of itemMatches) {
     try {
       const getTagValue = (tag: string): string => {
-        const match = itemXml.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, "i"));
+        const match = itemXml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, "i"));
         return match ? match[1].trim() : "";
       };
 
-      const itemCode =
-        getTagValue("ItemCode") ||
-        getTagValue("ItemBarcode") ||
-        getTagValue("Barcode") ||
-        "";
-      const itemName =
-        getTagValue("ItemName") ||
-        getTagValue("ItemNm") ||
-        getTagValue("ManufacturerItemDescription") ||
-        "";
-      const priceStr =
-        getTagValue("ItemPrice") ||
-        getTagValue("Price") ||
-        "0";
-      const unitOfMeasure =
-        getTagValue("UnitOfMeasure") ||
-        getTagValue("UnitQty") ||
-        getTagValue("Quantity") ||
-        "";
-      const quantityStr =
-        getTagValue("Quantity") ||
-        getTagValue("QtyInPackage") ||
-        "1";
-      const unitPriceStr =
-        getTagValue("UnitOfMeasurePrice") ||
-        getTagValue("UnitPrice") ||
-        "";
-      const priceUpdateDate =
-        getTagValue("PriceUpdateDate") ||
-        getTagValue("ItemUpdateDate") ||
-        "";
+      const itemCode = getTagValue("ItemCode");
+      const itemName = getTagValue("ItemName");
+      const priceStr = getTagValue("ItemPrice");
+      const unitOfMeasure = getTagValue("UnitOfMeasure") || getTagValue("Quantity");
+      const quantityStr = getTagValue("Quantity") || "1";
+      const unitPriceStr = getTagValue("UnitOfMeasurePrice");
+      const priceUpdateDate = getTagValue("PriceUpdateDate");
 
       const itemPrice = parseFloat(priceStr) || 0;
       const quantity = parseFloat(quantityStr) || 1;
@@ -93,7 +54,6 @@ function parseXMLPrices(xmlContent: string): RawStoreItem[] {
         });
       }
     } catch {
-      // Skip malformed items
       continue;
     }
   }
@@ -102,49 +62,42 @@ function parseXMLPrices(xmlContent: string): RawStoreItem[] {
 }
 
 /**
- * Fetch the list of available price files from Shufersal
+ * Extract Azure Blob URLs from Shufersal's page
  */
-async function fetchFileList(): Promise<ShufersalFileInfo[]> {
-  try {
-    const response = await fetch(SHUFERSAL_BASE_URL, {
-      headers: {
-        "Accept": "application/json, text/html, */*",
-        "User-Agent": "Mozilla/5.0 (compatible; PriceChecker/1.0)",
-      },
-    });
+async function fetchPriceFileUrls(): Promise<string[]> {
+  console.log("🔍 Fetching Shufersal price page...");
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+  const response = await fetch(SHUFERSAL_URL, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
+    },
+  });
 
-    const html = await response.text();
-    const files: ShufersalFileInfo[] = [];
-
-    // Parse file links from the HTML/JSON response
-    // Shufersal typically returns links to .gz files
-    const linkMatches = html.match(/href="([^"]*(?:PriceFull|Prices)[^"]*\.gz)"/gi) || [];
-
-    for (const match of linkMatches) {
-      const urlMatch = match.match(/href="([^"]*)"/i);
-      if (urlMatch) {
-        let url = urlMatch[1];
-        // Make absolute URL if needed
-        if (!url.startsWith("http")) {
-          url = `http://prices.shufersal.co.il${url.startsWith("/") ? "" : "/"}${url}`;
-        }
-        files.push({
-          url,
-          fileName: url.split("/").pop() || "",
-          fileType: url.includes("PriceFull") ? "full" : "prices",
-        });
-      }
-    }
-
-    return files;
-  } catch (error) {
-    console.error("Failed to fetch Shufersal file list:", error);
-    return [];
+  if (!response.ok) {
+    throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
   }
+
+  const html = await response.text();
+
+  // Extract Azure Blob storage URLs for .gz files
+  // Format: https://pricesprodpublic.blob.core.windows.net/price/Price*.gz?...
+  const urlRegex = /https:\/\/pricesprodpublic\.blob\.core\.windows\.net\/[^"'\s]+\.gz[^"'\s]*/g;
+  const matches = html.match(urlRegex) || [];
+
+  // Decode HTML entities in URLs
+  const urls = matches.map((url) =>
+    url.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  );
+
+  // Remove duplicates
+  const uniqueUrls = [...new Set(urls)];
+
+  console.log(`📁 Found ${uniqueUrls.length} price files`);
+
+  return uniqueUrls;
 }
 
 /**
@@ -153,21 +106,20 @@ async function fetchFileList(): Promise<ShufersalFileInfo[]> {
 async function downloadPriceFile(url: string): Promise<string> {
   const response = await fetch(url, {
     headers: {
-      "Accept": "application/gzip, application/xml, */*",
       "User-Agent": "Mozilla/5.0 (compatible; PriceChecker/1.0)",
+      Accept: "application/gzip, */*",
     },
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to download: ${response.status}`);
+    throw new Error(`Download failed: ${response.status}`);
   }
 
   const buffer = await response.arrayBuffer();
-
-  // Check if gzipped and decompress
   const uint8 = new Uint8Array(buffer);
+
+  // Check if gzipped (magic bytes: 0x1f 0x8b)
   if (uint8[0] === 0x1f && uint8[1] === 0x8b) {
-    // Gzip magic bytes
     const decompressed = gunzipSync(Buffer.from(buffer));
     return decompressed.toString("utf-8");
   }
@@ -177,8 +129,7 @@ async function downloadPriceFile(url: string): Promise<string> {
 }
 
 /**
- * Crawl Shufersal prices
- * Returns a list of products with their prices
+ * Main crawler function - fetches and parses Shufersal prices
  */
 export async function crawlShufersal(): Promise<CrawlerResult> {
   const result: CrawlerResult = {
@@ -189,54 +140,36 @@ export async function crawlShufersal(): Promise<CrawlerResult> {
   };
 
   try {
-    console.log("🛒 Fetching Shufersal price files...");
+    // Get list of price file URLs
+    const urls = await fetchPriceFileUrls();
 
-    // Get list of available files
-    const files = await fetchFileList();
-
-    if (files.length === 0) {
-      // Try direct known URL patterns as fallback
-      console.log("📋 No files found in listing, trying direct access...");
-
-      // Shufersal sometimes uses direct file patterns
-      const directUrls = [
-        "http://prices.shufersal.co.il/FileObject/UpdateCategory?catID=2&storeId=1&sort=Time&sortdir=DESC",
-      ];
-
-      for (const url of directUrls) {
-        try {
-          const response = await fetch(url);
-          const html = await response.text();
-
-          // Look for download links in the response
-          const gzLinks = html.match(/http[^"'\s]*\.gz/g) || [];
-          for (const link of gzLinks.slice(0, 3)) {
-            files.push({
-              url: link,
-              fileName: link.split("/").pop() || "",
-              fileType: "prices",
-            });
-          }
-        } catch {
-          continue;
-        }
-      }
+    if (urls.length === 0) {
+      throw new Error("No price files found");
     }
 
-    console.log(`📁 Found ${files.length} price files`);
+    // Download and parse first few files (to avoid overwhelming)
+    // Each file is a different store branch
+    const filesToProcess = urls.slice(0, 5);
+    let successCount = 0;
 
-    // Download and parse price files (limit to first few for speed)
-    const filesToProcess = files.slice(0, 3);
-
-    for (const file of filesToProcess) {
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const url = filesToProcess[i];
       try {
-        console.log(`📥 Downloading: ${file.fileName}`);
-        const xmlContent = await downloadPriceFile(file.url);
+        // Extract store ID from URL for logging
+        const storeMatch = url.match(/Price\d+-(\d+)-/);
+        const storeId = storeMatch ? storeMatch[1] : `file${i + 1}`;
+
+        console.log(`📥 Downloading store ${storeId}...`);
+        const xmlContent = await downloadPriceFile(url);
         const items = parseXMLPrices(xmlContent);
-        result.items.push(...items);
-        console.log(`✅ Parsed ${items.length} items from ${file.fileName}`);
+
+        if (items.length > 0) {
+          result.items.push(...items);
+          successCount++;
+          console.log(`   ✅ Parsed ${items.length} items`);
+        }
       } catch (error) {
-        console.error(`❌ Failed to process ${file.fileName}:`, error);
+        console.error(`   ❌ Failed:`, error instanceof Error ? error.message : error);
       }
     }
 
@@ -248,40 +181,44 @@ export async function crawlShufersal(): Promise<CrawlerResult> {
         uniqueItems.set(item.itemCode, item);
       }
     }
-    result.items = Array.from(uniqueItems.values());
 
-    result.success = result.items.length > 0;
-    console.log(`🎉 Crawl complete: ${result.items.length} unique items`);
+    // Also track high prices for range
+    const highPrices = new Map<string, number>();
+    for (const item of result.items) {
+      const current = highPrices.get(item.itemCode) || 0;
+      if (item.itemPrice > current) {
+        highPrices.set(item.itemCode, item.itemPrice);
+      }
+    }
+
+    result.items = Array.from(uniqueItems.values());
+    result.success = successCount > 0 && result.items.length > 0;
+
+    console.log(`\n🎉 Crawl complete!`);
+    console.log(`   Processed ${successCount}/${filesToProcess.length} files`);
+    console.log(`   Found ${result.items.length} unique products`);
   } catch (error) {
     result.error = error instanceof Error ? error.message : "Unknown error";
-    console.error("❌ Shufersal crawl failed:", error);
+    console.error("❌ Crawl failed:", error);
   }
 
   return result;
 }
 
 /**
- * Search for specific products by name or barcode
+ * Search for items matching given terms (barcode or name)
  */
 export function searchItems(
   items: RawStoreItem[],
   searchTerms: string[]
 ): RawStoreItem[] {
-  const results: RawStoreItem[] = [];
-
-  for (const item of items) {
+  return items.filter((item) => {
     const itemNameLower = item.itemName.toLowerCase();
-    const matches = searchTerms.some(
+    return searchTerms.some(
       (term) =>
         item.itemCode === term ||
         item.itemCode.includes(term) ||
         itemNameLower.includes(term.toLowerCase())
     );
-    if (matches) {
-      results.push(item);
-    }
-  }
-
-  return results;
+  });
 }
-

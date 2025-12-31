@@ -98,6 +98,12 @@ export default function Home() {
   const [priceInput, setPriceInput] = useState("");
   const [priceRating, setPriceRating] = useState<PriceRating | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Hydration fix: only render client-specific content after mount
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const refreshPrices = async () => {
     setIsRefreshing(true);
@@ -219,7 +225,7 @@ export default function Home() {
                 {dataSource === "crawled" ? "מעודכן" : "בסיסי"}
               </span>
             </div>
-            {lastUpdated && (
+            {isMounted && lastUpdated && (
               <span className="text-zinc-600">{formatLastUpdated(lastUpdated)}</span>
             )}
           </div>
