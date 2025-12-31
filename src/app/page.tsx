@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Search,
   ShoppingCart,
@@ -13,16 +13,37 @@ import {
   Check,
   AlertTriangle,
   Info,
+  RefreshCw,
 } from "lucide-react";
-import {
-  mockProducts,
-  categories,
-  getPriceRating,
-  type Product,
-  type Category,
-} from "@/data/mockPrices";
+import pricesData from "@/data/prices.json";
+import { categories, type Category } from "@/lib/types";
+
+interface Product {
+  id: string;
+  name: string;
+  nameHebrew: string;
+  category: string;
+  unit: string;
+  averagePrice: number;
+  lowPrice: number;
+  highPrice: number;
+  image: string;
+  lastUpdated?: string;
+}
 
 type PriceRating = "great" | "good" | "average" | "high" | "expensive";
+
+function getPriceRating(price: number, product: Product): PriceRating {
+  const range = product.highPrice - product.lowPrice;
+  if (range === 0) return "average";
+  const position = (price - product.lowPrice) / range;
+
+  if (position <= 0.1) return "great";
+  if (position <= 0.35) return "good";
+  if (position <= 0.65) return "average";
+  if (position <= 0.85) return "high";
+  return "expensive";
+}
 
 const ratingConfig: Record<
   PriceRating,
@@ -61,6 +82,11 @@ const ratingConfig: Record<
 };
 
 export default function Home() {
+  const [products, setProducts] = useState<Product[]>(pricesData.products);
+  const [dataSource, setDataSource] = useState<string>(pricesData.source);
+  const [lastUpdated, setLastUpdated] = useState<string>(pricesData.lastUpdated);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<Category | "all">(
     "all"
@@ -70,8 +96,38 @@ export default function Home() {
   const [priceRating, setPriceRating] = useState<PriceRating | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
+  // Try to fetch live prices from API
+  const refreshPrices = async () => {
+    setIsRefreshing(true);
+    try {
+      const response = await fetch("/api/products");
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.products) {
+          setProducts(data.products);
+          setDataSource(data.source);
+          setLastUpdated(data.timestamp);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to refresh prices:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  // Initial load - try to get fresh data
+  useEffect(() => {
+    // Only fetch from API if prices are stale (older than 1 hour)
+    const lastUpdate = new Date(lastUpdated);
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    if (lastUpdate < oneHourAgo) {
+      refreshPrices();
+    }
+  }, []);
+
   const filteredProducts = useMemo(() => {
-    return mockProducts.filter((product) => {
+    return products.filter((product) => {
       const matchesSearch =
         product.nameHebrew.includes(searchQuery) ||
         product.name.toLowerCase().includes(searchQuery.toLowerCase());
@@ -79,7 +135,7 @@ export default function Home() {
         selectedCategory === "all" || product.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });
-  }, [searchQuery, selectedCategory]);
+  }, [products, searchQuery, selectedCategory]);
 
   const handleProductSelect = (product: Product) => {
     setSelectedProduct(product);
@@ -101,6 +157,20 @@ export default function Home() {
     setPriceRating(null);
   };
 
+  const formatLastUpdated = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString("he-IL", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return "";
+    }
+  };
+
   return (
     <div className="min-h-screen pb-20">
       {/* Header */}
@@ -116,6 +186,30 @@ export default function Home() {
                 <p className="text-xs text-gray-500">בדוק מחירים בזמן אמת</p>
               </div>
             </div>
+            <button
+              onClick={refreshPrices}
+              disabled={isRefreshing}
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
+              title="רענן מחירים"
+            >
+              <RefreshCw
+                className={`w-5 h-5 text-gray-500 ${
+                  isRefreshing ? "animate-spin" : ""
+                }`}
+              />
+            </button>
+          </div>
+          {/* Data source indicator */}
+          <div className="mt-2 flex items-center gap-2 text-xs text-gray-400">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                dataSource === "crawled" ? "bg-green-400" : "bg-amber-400"
+              }`}
+            />
+            <span>
+              {dataSource === "crawled" ? "מחירים מעודכנים" : "מחירי בסיס"}
+              {lastUpdated && ` • ${formatLastUpdated(lastUpdated)}`}
+            </span>
           </div>
         </div>
       </header>
@@ -134,10 +228,11 @@ export default function Home() {
             />
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all duration-200 ${showFilters || selectedCategory !== "all"
+              className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all duration-200 ${
+                showFilters || selectedCategory !== "all"
                   ? "bg-blue-100 text-blue-600"
                   : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                }`}
+              }`}
             >
               <Filter className="w-5 h-5" />
             </button>
@@ -155,10 +250,11 @@ export default function Home() {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setSelectedCategory("all")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${selectedCategory === "all"
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                    selectedCategory === "all"
                       ? "bg-blue-500 text-white shadow-md"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
+                  }`}
                 >
                   הכל
                 </button>
@@ -166,10 +262,11 @@ export default function Home() {
                   <button
                     key={category}
                     onClick={() => setSelectedCategory(category)}
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${selectedCategory === category
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                      selectedCategory === category
                         ? "bg-blue-500 text-white shadow-md"
                         : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      }`}
+                    }`}
                   >
                     {category}
                   </button>
@@ -282,8 +379,8 @@ export default function Home() {
                         {priceRating === "great" || priceRating === "good"
                           ? " - מצאת מציאה!"
                           : priceRating === "expensive" || priceRating === "high"
-                            ? " - כדאי לחפש במקום אחר"
-                            : ""}
+                          ? " - כדאי לחפש במקום אחר"
+                          : ""}
                       </p>
                     </div>
                   </div>
@@ -316,10 +413,11 @@ export default function Home() {
                 <button
                   key={product.id}
                   onClick={() => handleProductSelect(product)}
-                  className={`p-4 bg-white rounded-2xl border transition-all duration-200 text-right card-shadow hover:scale-[1.02] opacity-0 animate-fade-in ${selectedProduct?.id === product.id
+                  className={`p-4 bg-white rounded-2xl border transition-all duration-200 text-right card-shadow hover:scale-[1.02] opacity-0 animate-fade-in ${
+                    selectedProduct?.id === product.id
                       ? "border-blue-400 ring-2 ring-blue-100"
                       : "border-gray-200 hover:border-gray-300"
-                    }`}
+                  }`}
                   style={{ animationDelay: `${Math.min(index * 0.03, 0.3)}s` }}
                 >
                   <div className="text-3xl mb-2">{product.image}</div>

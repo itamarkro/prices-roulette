@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "crawl": "npx tsx scripts/crawl.ts"
   },
   "dependencies": {
     "lucide-react": "0.460.0",
