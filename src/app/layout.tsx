@@ -20,7 +20,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="he" dir="rtl">
-      <body className={`${heebo.variable} antialiased`}>{children}</body>
+      <body className={`${heebo.variable} font-heebo antialiased`}>
+        {children}
+      </body>
     </html>
   );
 }
