@@ -134,11 +134,10 @@ export default function Home() {
             />
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all duration-200 ${
-                showFilters || selectedCategory !== "all"
+              className={`absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-xl transition-all duration-200 ${showFilters || selectedCategory !== "all"
                   ? "bg-blue-100 text-blue-600"
                   : "bg-gray-100 text-gray-500 hover:bg-gray-200"
-              }`}
+                }`}
             >
               <Filter className="w-5 h-5" />
             </button>
@@ -156,11 +155,10 @@ export default function Home() {
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setSelectedCategory("all")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
-                    selectedCategory === "all"
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${selectedCategory === "all"
                       ? "bg-blue-500 text-white shadow-md"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
+                    }`}
                 >
                   הכל
                 </button>
@@ -168,11 +166,10 @@ export default function Home() {
                   <button
                     key={category}
                     onClick={() => setSelectedCategory(category)}
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
-                      selectedCategory === category
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${selectedCategory === category
                         ? "bg-blue-500 text-white shadow-md"
                         : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
+                      }`}
                   >
                     {category}
                   </button>
@@ -285,8 +282,8 @@ export default function Home() {
                         {priceRating === "great" || priceRating === "good"
                           ? " - מצאת מציאה!"
                           : priceRating === "expensive" || priceRating === "high"
-                          ? " - כדאי לחפש במקום אחר"
-                          : ""}
+                            ? " - כדאי לחפש במקום אחר"
+                            : ""}
                       </p>
                     </div>
                   </div>
@@ -319,11 +316,10 @@ export default function Home() {
                 <button
                   key={product.id}
                   onClick={() => handleProductSelect(product)}
-                  className={`p-4 bg-white rounded-2xl border transition-all duration-200 text-right card-shadow hover:scale-[1.02] opacity-0 animate-fade-in ${
-                    selectedProduct?.id === product.id
+                  className={`p-4 bg-white rounded-2xl border transition-all duration-200 text-right card-shadow hover:scale-[1.02] opacity-0 animate-fade-in ${selectedProduct?.id === product.id
                       ? "border-blue-400 ring-2 ring-blue-100"
                       : "border-gray-200 hover:border-gray-300"
-                  }`}
+                    }`}
                   style={{ animationDelay: `${Math.min(index * 0.03, 0.3)}s` }}
                 >
                   <div className="text-3xl mb-2">{product.image}</div>
